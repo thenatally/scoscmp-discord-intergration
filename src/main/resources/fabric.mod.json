@@ -3,9 +3,9 @@
 	"id": "sco-discord-auth",
 	"version": "${version}",
 	"name": "SCO discord auth",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "Manages discord intergration for Scratch Coders.",
 	"authors": [
-		"Me!"
+		"tally"
 	],
 	"contact": {
 		"homepage": "https://fabricmc.net/",
@@ -17,25 +17,12 @@
 	"entrypoints": {
 		"main": [
 			"tally.scratchcodersmod.SCODiscordAuth"
-		],
-		"client": [
-			"tally.scratchcodersmod.SCODiscordAuthClient"
 		]
 	},
-	"mixins": [
-		"sco-discord-auth.mixins.json",
-		{
-			"config": "sco-discord-auth.client.mixins.json",
-			"environment": "client"
-		}
-	],
 	"depends": {
 		"fabricloader": ">=0.16.14",
 		"minecraft": "~1.21.6",
 		"java": ">=21",
 		"fabric-api": "*"
-	},
-	"suggests": {
-		"another-mod": "*"
 	}
 }
