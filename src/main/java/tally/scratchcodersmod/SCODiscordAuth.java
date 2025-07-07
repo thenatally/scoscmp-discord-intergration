@@ -17,7 +17,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -37,7 +36,6 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerLoginNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 
@@ -51,12 +49,15 @@ public class SCODiscordAuth implements ModInitializer {
 	private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
 	private volatile boolean authAvailable = false;
 	private Config config;
-	private final Map<UUID, ServerLoginNetworkHandler> pendingLoginHandlers = new HashMap<>();
+	// private final Map<UUID, ServerLoginNetworkHandler> pendingLoginHandlers = new
+	// HashMap<>();
 	private final Map<UUID, String> pendingKicks = new HashMap<>();
-	private final Map<UUID, AuthResult> authResults = new ConcurrentHashMap<>();
+	// private final Map<UUID, AuthResult> authResults = new ConcurrentHashMap<>();
 	private final Map<UUID, Boolean> pendingOps = new ConcurrentHashMap<>();
 	private static SCODiscordAuth mod;
 	private JsonObject remoteConfig = new JsonObject();
+	private volatile long lastReconnectAttempt = 0;
+	private static final long RECONNECT_INTERVAL_MS = 1000;
 
 	public static SCODiscordAuth getMod() {
 		return mod;
@@ -130,6 +131,15 @@ public class SCODiscordAuth implements ModInitializer {
 	}
 
 	private void reconnectWebSocket() {
+		long now = System.currentTimeMillis();
+		long delta = now - lastReconnectAttempt;
+
+		if (delta < RECONNECT_INTERVAL_MS) {
+			LOGGER.info("Connect attempt ignored: too soon since last attempt " + delta);
+			return;
+		}
+		lastReconnectAttempt = now;
+
 		try {
 			if (socketClient != null) {
 				socketClient.closeBlocking();
@@ -141,6 +151,7 @@ public class SCODiscordAuth implements ModInitializer {
 	}
 
 	private void connectWebSocket() {
+
 		try {
 			socketClient = new WebSocketClient(new URI(config.websocketUrl)) {
 				@Override
@@ -159,50 +170,51 @@ public class SCODiscordAuth implements ModInitializer {
 					String type = json.get("type").getAsString();
 
 					switch (type) {
-						case "authentication.accept" -> {
-							UUID uuid = UUID.fromString(json.get("uuid").getAsString());
-							boolean opValue = json.has("op") && json.get("op").getAsBoolean();
-							pendingOps.put(uuid, opValue);
-							AuthResult result = authResults.get(uuid);
-							if (result != null) {
-								result.accepted = true;
-								result.latch.countDown();
-							}
-							serverInstance.execute(() -> {
-								ServerPlayerEntity player = pendingAuthPlayers.remove(uuid);
-								if (player != null) {
-									LOGGER.info("player {} authentication accepted, op value: {}",
-											player.getName().getString(), opValue);
-								}
-							});
-						}
-						case "authentication.deny" -> {
-							UUID uuid = UUID.fromString(json.get("uuid").getAsString());
-							String code = json.has("code") ? json.get("code").getAsString() : "auth.denied";
-							AuthResult result = authResults.get(uuid);
-							if (result != null) {
-								result.accepted = false;
-								result.code = code;
-								result.latch.countDown();
-							}
-							serverInstance.execute(() -> {
-								ServerPlayerEntity player = pendingAuthPlayers.remove(uuid);
-								if (player != null) {
-									if (serverInstance.getPlayerManager().getPlayer(uuid) != null) {
-										player.networkHandler
-												.disconnect(Text.literal("Authentication denied: " + code));
-										LOGGER.info("player {} was denied auth: {}", player.getName().getString(),
-												code);
-									} else {
-										pendingKicks.put(uuid, "Authentication denied: " + code);
-										LOGGER.info("queued kick for player {}: {}", uuid, code);
-									}
-								} else {
-									pendingKicks.put(uuid, "Authentication denied: " + code);
-									LOGGER.info("queued kick for player {}: {}", uuid, code);
-								}
-							});
-						}
+						// case "authentication.accept" -> {
+						// UUID uuid = UUID.fromString(json.get("uuid").getAsString());
+						// boolean opValue = json.has("op") && json.get("op").getAsBoolean();
+						// pendingOps.put(uuid, opValue);
+						// AuthResult result = authResults.get(uuid);
+						// if (result != null) {
+						// result.accepted = true;
+						// result.latch.countDown();
+						// }
+						// serverInstance.execute(() -> {
+						// ServerPlayerEntity player = pendingAuthPlayers.remove(uuid);
+						// if (player != null) {
+						// LOGGER.info("player {} authentication accepted, op value: {}",
+						// player.getName().getString(), opValue);
+						// }
+						// });
+						// }
+						// case "authentication.deny" -> {
+						// UUID uuid = UUID.fromString(json.get("uuid").getAsString());
+						// String code = json.has("code") ? json.get("code").getAsString() :
+						// "auth.denied";
+						// AuthResult result = authResults.get(uuid);
+						// if (result != null) {
+						// result.accepted = false;
+						// result.code = code;
+						// result.latch.countDown();
+						// }
+						// serverInstance.execute(() -> {
+						// ServerPlayerEntity player = pendingAuthPlayers.remove(uuid);
+						// if (player != null) {
+						// if (serverInstance.getPlayerManager().getPlayer(uuid) != null) {
+						// player.networkHandler
+						// .disconnect(Text.literal("Authentication denied: " + code));
+						// LOGGER.info("player {} was denied auth: {}", player.getName().getString(),
+						// code);
+						// } else {
+						// pendingKicks.put(uuid, "Authentication denied: " + code);
+						// LOGGER.info("queued kick for player {}: {}", uuid, code);
+						// }
+						// } else {
+						// pendingKicks.put(uuid, "Authentication denied: " + code);
+						// LOGGER.info("queued kick for player {}: {}", uuid, code);
+						// }
+						// });
+						// }
 						case "kick" -> {
 							UUID uuid = UUID.fromString(json.get("uuid").getAsString());
 							serverInstance.execute(() -> {
@@ -282,12 +294,8 @@ public class SCODiscordAuth implements ModInitializer {
 										false);
 							}
 						}
-						case "config.update" -> {
-							JsonObject configData = json.getAsJsonObject("config");
-							remoteConfig = configData;
-							LOGGER.info("Received remote config update: {}", remoteConfig.toString());
-						}
-						
+
+						case "config.update" -> handleConfigUpdate(json);
 						case "heartbeat" -> {
 							authAvailable = true;
 						}
@@ -300,8 +308,7 @@ public class SCODiscordAuth implements ModInitializer {
 					LOGGER.warn("ws closed: {} - {}", code, reason);
 					authAvailable = false;
 					scheduler.schedule(() -> {
-						LOGGER.info("attempting to reconnect ws...");
-						connectWebSocket();
+						reconnectWebSocket();
 					}, 5, TimeUnit.SECONDS);
 				}
 
@@ -310,8 +317,7 @@ public class SCODiscordAuth implements ModInitializer {
 					LOGGER.error("ws error", ex);
 					authAvailable = false;
 					scheduler.schedule(() -> {
-						LOGGER.info("attempting to reconnect ws...");
-						connectWebSocket();
+						reconnectWebSocket();
 					}, 5, TimeUnit.SECONDS);
 				}
 			};
@@ -320,7 +326,7 @@ public class SCODiscordAuth implements ModInitializer {
 		} catch (Exception e) {
 			LOGGER.error("failed to initialize ws client", e);
 			authAvailable = false;
-			scheduler.schedule(this::connectWebSocket, 5, TimeUnit.SECONDS);
+			scheduler.schedule(this::reconnectWebSocket, 5, TimeUnit.SECONDS);
 		}
 	}
 
@@ -348,6 +354,7 @@ public class SCODiscordAuth implements ModInitializer {
 		});
 
 		var scheduler = Executors.newScheduledThreadPool(1);
+		// attribute the_tally minecraft:scale base set 0.7
 		// attribute zuzutnd minecraft:scale base set 0.5
 		scheduler.scheduleAtFixedRate(() -> {
 			try {
@@ -432,45 +439,56 @@ public class SCODiscordAuth implements ModInitializer {
 
 	}
 
+	private void sendConfigUpdate() {
+		if (socketClient != null && socketClient.isOpen()) {
+			JsonObject configJson = new JsonObject();
+			configJson.addProperty("type", "config.update");
+			configJson.add("config", gson.toJsonTree(remoteConfig));
+			socketClient.send(gson.toJson(configJson));
+		}
+	}
+
+	// On receiving config.update from JS, update local config
+	private void handleConfigUpdate(JsonObject json) {
+		if (json.has("config")) {
+			remoteConfig = json.getAsJsonObject("config");
+			LOGGER.info("Config updated from JS: {}", remoteConfig.toString());
+		}
+	}
+
+	private void updatePendingAndSync(UUID uuid, String code) {
+		if (!remoteConfig.has("pending"))
+			remoteConfig.add("pending", new JsonObject());
+		remoteConfig.getAsJsonObject("pending").addProperty(uuid.toString(), code);
+		sendConfigUpdate();
+	}
+
 	public Object checkAuthentication(UUID uuid) {
 		if (!authAvailable) {
 			reconnectWebSocket();
-			return "auth.unavailable";
+			LOGGER.warn("Ws unavalable using outdated config");
 		}
-		final CountDownLatch latch = new CountDownLatch(1);
-		authResults.put(uuid, new AuthResult(latch));
-
-		JsonObject request = new JsonObject();
-		request.addProperty("type", "authentication.request");
-		request.addProperty("uuid", uuid.toString());
-		socketClient.send(gson.toJson(request));
-
-		try {
-			if (!latch.await(5, TimeUnit.SECONDS)) {
-				authResults.remove(uuid);
-				return "auth.timeout";
-			}
-		} catch (InterruptedException e) {
-			Thread.currentThread().interrupt();
-			authResults.remove(uuid);
-			return "auth.interrupted";
-		}
-		AuthResult result = authResults.remove(uuid);
-		if (result != null && result.accepted) {
+		String uuidStr = uuid.toString();
+		if (remoteConfig.has("linked") && remoteConfig.getAsJsonObject("linked").has(uuidStr)) {
+			boolean isTimedOut = remoteConfig.has("timedOut")
+					&& remoteConfig.getAsJsonArray("timedOut").toString().contains(uuidStr);
+			if (isTimedOut)
+				return "You are currently timed out on Discord.";
+			boolean isMod = remoteConfig.has("moderators")
+					&& remoteConfig.getAsJsonArray("moderators").toString().contains(uuidStr);
+			if (isMod)
+				pendingOps.put(uuid, true);
 			return true;
-		} else if (result != null) {
-			return result.code != null ? result.code : "auth.denied";
 		}
-		return "auth.error";
+		if (remoteConfig.has("pending") && remoteConfig.getAsJsonObject("pending").has(uuidStr)) {
+			return "Use code " + remoteConfig.getAsJsonObject("pending").get(uuidStr).getAsString();
+		}
+		if (!authAvailable) {
+			return "auth.unavailable cannot generate new code";
+		}
+		String code = UUID.randomUUID().toString().substring(0, 6);
+		updatePendingAndSync(uuid, code);
+		return "Use code " + code;
 	}
-	
-	private static class AuthResult {
-		final CountDownLatch latch;
-		boolean accepted = false;
-		String code = null;
 
-		AuthResult(CountDownLatch latch) {
-			this.latch = latch;
-		}
-	}
 }
