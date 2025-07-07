@@ -19,6 +19,13 @@
 			"tally.scratchcodersmod.SCODiscordAuth"
 		]
 	},
+	"mixins": [
+		"sco-discord-auth.mixins.json",
+		{
+			"config": "sco-discord-auth.client.mixins.json",
+			"environment": "client"
+		}
+	],
 	"depends": {
 		"fabricloader": ">=0.16.14",
 		"minecraft": "~1.21.6",
